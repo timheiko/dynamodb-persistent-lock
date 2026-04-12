@@ -13,3 +13,7 @@ dynamic = [
 
 [tool.setuptools.dynamic]
 version = {attr = "dynamodb_persistent_lock.__version__"}
+
+[project.urls]
+"Source" = "https://github.com/timheiko/dynamodb-persistent-lock"
+"Bug Tracker" = "https://github.com/timheiko/dynamodb-persistent-lock/issues"

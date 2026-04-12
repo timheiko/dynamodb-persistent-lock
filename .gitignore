@@ -1,6 +1,6 @@
 __pycache__
 dynamodb-local-metadata.json
-__pycache__
+.pytest_cache
 /tmp
 /venv
 *.egg-info
