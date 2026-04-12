@@ -34,6 +34,7 @@ Non-async DynamoDB local download:
         ttl_attribute_name="expire_at",
         ttl_heartbeat_multiplier=3,
     )
+    lock_factory.ensure_table()
     ...
     # Open a lock client
     lock_client = lock_factory.open_lock_client()

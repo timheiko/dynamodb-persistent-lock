@@ -1,5 +1,4 @@
 import pytest
-import time
 from datetime import timedelta
 
 from dynamodb_persistent_lock.dynamodb_persistent_lock import (
@@ -33,7 +32,6 @@ def endpoint_url() -> str:
 
     yield dynamodb_local_server.endpoint
 
-    time.sleep(1)
     dynamodb_local_server.shutdown()
 
 

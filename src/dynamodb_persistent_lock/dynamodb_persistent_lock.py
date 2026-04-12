@@ -146,15 +146,17 @@ class DynamoDBPersistentLockClient:
         if lock is None:
             return None
 
-        event = Event()
-        self.locks[lock.to_key()] = event
-        self._start_heartbeat(lock, event)
+        self._start_heartbeat(lock)
         return lock
 
     def close(self) -> None:
-        for lock_key, event in self.locks.items():
+        for lock_key, (event, _) in self.locks.items():
             logger.info(f"Stopping lock heartbeat for {lock_key}")
             event.set()
+
+        for lock_key, (_, thread) in self.locks.items():
+            logger.info(f"Waiting for lock {lock_key} heartbeat to exit")
+            thread.join()
 
     def _try_acquire_lock(
         self, lock_key: str, sort_key: str = "-"
@@ -177,9 +179,7 @@ class DynamoDBPersistentLockClient:
         return lock
 
     def _try_create_lock(self, lock: DynamoDBLock) -> DynamoDBLock:
-        logger.info(
-            f"❓ Trying to acquire the lock <{lock.lock_key}> <{lock.sort_key}>."
-        )
+        logger.info(f"❓ Trying to acquire the lock {lock.to_key()}.")
         item = {
             "Item": {
                 self.partition_key_name: lock.lock_key,
@@ -195,11 +195,11 @@ class DynamoDBPersistentLockClient:
             },
         }
         self.table.put_item(**item)
-        logger.info(f"✅ The lock {lock.to_key} has been acquired.")
+        logger.info(f"✅ The lock {lock.to_key()} has been acquired: {lock}")
         return lock
 
     def _read_existing_lock(self, lock: DynamoDBLock) -> DynamoDBLock:
-        logger.info(f"❓ Reading existing lock {lock.to_key}.")
+        logger.info(f"❓ Reading existing lock {lock.to_key()}: {lock}")
         query = {
             "Key": {
                 self.partition_key_name: lock.lock_key,
@@ -217,32 +217,24 @@ class DynamoDBPersistentLockClient:
         )
 
     def _try_reacquire_existing_lock(self, new_lock: DynamoDBLock) -> DynamoDBLock:
-        logger.warning(
-            f"❌ The lock <{new_lock.lock_key}> <{new_lock.sort_key}> already exists."
-        )
+        logger.warning(f"❌ The lock {new_lock.to_key()} already exists.")
 
         existing_lock = self._read_existing_lock(new_lock)
-        logger.warning(
-            f"❌ The lock <{new_lock.lock_key}> <{new_lock.sort_key}> already exists."
-        )
+        logger.warning(f"❌ The lock {new_lock.to_key()} already exists.")
         existing_lock = self._read_existing_lock(new_lock)
 
         logger.info(
-            f"❓ Checking the expiration of the existing lock <{new_lock.lock_key}> <{new_lock.sort_key}>."
+            f"❓ Checking the expiration of the existing lock {new_lock.to_key()}."
         )
         if existing_lock.ttl > new_lock.now:
-            logger.error(
-                f"❌ The existing lock <{new_lock.lock_key}> <{new_lock.sort_key}> has not expired."
-            )
+            logger.error(f"❌ The existing lock {new_lock.to_key()} has not expired.")
             return None
 
         logger.info(
-            f"❓ Trying to re-acquired the existing expired lock <{new_lock.lock_key}> <{new_lock.sort_key}>."
+            f"❓ Trying to re-acquired the existing expired lock {new_lock.to_key()}."
         )
         self._update_lock(existing_lock=existing_lock, new_lock=new_lock)
-        logger.info(
-            f"✅ Re-acquired the existing expired lock <{new_lock.lock_key}> <{new_lock.sort_key}>."
-        )
+        logger.info(f"✅ Re-acquired the existing expired lock {new_lock.to_key()}.")
         return new_lock
 
     def _update_lock(
@@ -311,9 +303,12 @@ class DynamoDBPersistentLockClient:
 
         self._delete_lock(existing_lock=existing_lock)
 
-    def _start_heartbeat(self, existing_lock: DynamoDBLock, event: Event) -> None:
+    def _start_heartbeat(self, existing_lock: DynamoDBLock) -> None:
+        event = Event()
         thread = Thread(
             name=f"DynamoDb-Persistent-Lock-on-<{existing_lock.to_key()}>",
             target=self._send_heartbeat,
             args=(existing_lock, event),
-        ).start()
+        )
+        self.locks[existing_lock.to_key()] = (event, thread)
+        thread.start()
