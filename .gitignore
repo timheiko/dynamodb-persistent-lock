@@ -1,0 +1,7 @@
+__pycache__
+dynamodb-local-metadata.json
+__pycache__
+/tmp
+/venv
+*.egg-info
+build

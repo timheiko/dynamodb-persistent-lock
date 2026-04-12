@@ -1,0 +1,15 @@
+[project]
+description = "DynamoDB Persistent Lock"
+name = "dynamodb-persistent-lock"
+license = {text = "Apache-2.0 AND MIT"}
+authors = [
+  {name = "Tim Heiko", email = "175552092+timheiko@users.noreply.github.com"},
+]
+requires-python = ">= 3.14"
+readme = "README.rst"
+dynamic = [
+  "version",
+]
+
+[tool.setuptools.dynamic]
+version = {attr = "dynamodb_persistent_lock.__version__"}
