@@ -141,13 +141,16 @@ class DynamoDBPersistentLockClient:
         logger.info("table %s", type(self.table))
         self.owner_name = self.owner_name or f"{os.uname().nodename}-{uuid.uuid7()}"
 
-    def try_acquire_lock(self, lock_key: str, sort_key: str = "-"):
+    def try_acquire_lock(self, lock_key: str, sort_key: str = "-") -> str:
         lock = self._try_acquire_lock(lock_key=lock_key, sort_key=sort_key)
         if lock is None:
             return None
 
         self._start_heartbeat(lock)
-        return lock
+        return lock.to_key()
+
+    def lock_acquired(self, lock_token: str) -> bool:
+        return lock_token in self.locks
 
     def close(self) -> None:
         for lock_key, (event, _) in self.locks.items():

@@ -17,7 +17,7 @@ Non-async DynamoDB local download:
 
 .. code-block:: python
 
-    from dynamodb_persistent_lock.dynamodb_persistent_lock import (
+    from dynamodb_persistent_lock import (
         DynamoDBPersistentLockFactory,
         DynamoDBPersistentLockClient,
     )
@@ -39,9 +39,10 @@ Non-async DynamoDB local download:
     # Open a lock client
     lock_client = lock_factory.open_lock_client()
     try:
-        lock = lock_client.try_acquire_lock("my_lock_key")
+        lock_token = lock_client.try_acquire_lock("my_lock_key")
         ...
-        # Lock-guarded code here.
+        while lock_client.lock_acquired(lock_token):
+            # Lock-guarded code here.
     finally:
         lock_client.close()
 

@@ -1,7 +1,7 @@
 import pytest
 from datetime import timedelta
 
-from dynamodb_persistent_lock.dynamodb_persistent_lock import (
+from dynamodb_persistent_lock import (
     DynamoDBPersistentLockFactory,
     DynamoDBPersistentLockClient,
 )
@@ -15,7 +15,7 @@ def factory(endpoint_url: str) -> DynamoDBPersistentLockFactory:
         table_name="locks",
         region_name="eu-central-1",
         endpoint_url=endpoint_url,
-        partition_key_name="lock_key",
+        partition_key_name="lock_token",
         sort_key_name="sort_key",
         record_version_number_name="rvn",
         heartbeat_period=timedelta(seconds=10),
@@ -55,19 +55,40 @@ def test_acquire_lock_once(lock_client: DynamoDBPersistentLockClient):
     lock_client.heartbeat_period = timedelta(seconds=1)
     lock_client.owner_name = "test_acquire_lock_once"
 
-    lock = lock_client.try_acquire_lock("my_lock_key")
+    lock_token = lock_client.try_acquire_lock("my_lock_1")
 
-    assert lock is not None
+    assert lock_token == "<my_lock_1|->"
 
 
 def test_acquire_lock_twice(lock_client: DynamoDBPersistentLockClient):
     lock_client.heartbeat_period = timedelta(seconds=5)
     lock_client.owner_name = "test_acquire_lock_twice"
 
-    lock1 = lock_client.try_acquire_lock("my_lock_key")
+    lock_token1 = lock_client.try_acquire_lock("my_lock")
 
-    assert lock1 is not None
+    assert lock_token1 == "<my_lock|->"
 
-    lock2 = lock_client.try_acquire_lock("my_lock_key")
+    lock_token2 = lock_client.try_acquire_lock("my_lock")
 
-    assert lock2 is None
+    assert lock_token2 is None
+
+
+@pytest.mark.slow
+def test_acquire_lock_and_check_it_acquired(lock_client: DynamoDBPersistentLockClient):
+    lock_client.heartbeat_period = timedelta(seconds=1)
+    lock_client.owner_name = "test_acquire_lock_and_check_it_acquired"
+
+    lock_token = lock_client.try_acquire_lock("my_lock")
+
+    assert lock_token == "<my_lock|->"
+    assert lock_client.lock_acquired(lock_token)
+
+
+@pytest.mark.slow
+def test_do_not_acquire_lock_and_check_it_acquired(
+    lock_client: DynamoDBPersistentLockClient,
+):
+    lock_client.heartbeat_period = timedelta(seconds=1)
+    lock_client.owner_name = "test_do_not_acquire_lock_and_check_it_acquired"
+
+    assert not lock_client.lock_acquired("<my_lock|->")
