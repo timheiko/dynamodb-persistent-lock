@@ -1,15 +1,16 @@
-from dataclasses import dataclass, field
-import boto3
-from botocore.exceptions import ClientError
-from logging import getLogger
-from datetime import timedelta
 import os
-import uuid
 import time
-from decimal import Decimal
+import uuid
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
+from datetime import timedelta
+from decimal import Decimal
+from logging import getLogger
 from threading import Event, Thread
 from typing import Mapping
+
+import boto3
+from botocore.exceptions import ClientError
 
 logger = getLogger(__name__)
 

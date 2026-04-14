@@ -1,12 +1,12 @@
-import pytest
 from datetime import timedelta
 
-from dynamodb_persistent_lock import (
-    DynamoDBPersistentLockFactory,
-    DynamoDBPersistentLockClient,
-)
+import pytest
+from dynamodb_local import DynamoDBLocalServer, download_dynamodb, start_dynamodb_local
 
-from dynamodb_local import download_dynamodb, start_dynamodb_local, DynamoDBLocalServer
+from dynamodb_persistent_lock import (
+    DynamoDBPersistentLockClient,
+    DynamoDBPersistentLockFactory,
+)
 
 
 @pytest.fixture

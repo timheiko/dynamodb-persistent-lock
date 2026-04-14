@@ -1,3 +1,8 @@
+[build-system]
+requires = [
+  "setuptools >= 75.3.0"
+]
+
 [project]
 description = "DynamoDB Persistent Lock"
 name = "dynamodb-persistent-lock"
@@ -10,6 +15,20 @@ readme = "README.rst"
 dynamic = [
   "version",
 ]
+dependencies = [
+  "build",
+  "boto3",
+]
+
+[project.optional-dependencies]
+dev = [
+  "black",
+  "dynamodb-local",
+  "isort",
+  "pytest",
+  "pytest-asyncio",
+]
+
 
 [tool.setuptools.dynamic]
 version = {attr = "dynamodb_persistent_lock.__version__"}
@@ -17,3 +36,6 @@ version = {attr = "dynamodb_persistent_lock.__version__"}
 [project.urls]
 "Source" = "https://github.com/timheiko/dynamodb-persistent-lock"
 "Bug Tracker" = "https://github.com/timheiko/dynamodb-persistent-lock/issues"
+
+[tool.isort]
+profile = "black"
