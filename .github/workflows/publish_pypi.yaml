@@ -33,6 +33,9 @@ jobs:
       
       - name: Check import sorting
         run: isort --check .
+      
+      - name: Flake8 check
+        run: flake8 src
 
       - name: Build package
         run: python -m build

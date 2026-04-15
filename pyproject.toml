@@ -24,6 +24,7 @@ dependencies = [
 dev = [
   "black",
   "dynamodb-local",
+  "flake8",
   "isort",
   "pytest",
   "pytest-asyncio",
