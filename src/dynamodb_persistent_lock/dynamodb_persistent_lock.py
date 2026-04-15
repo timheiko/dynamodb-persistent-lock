@@ -147,6 +147,7 @@ class DynamoDBPersistentLockClient:
             return None
 
         self._start_heartbeat(lock)
+        logger.info(f"✅ Successfully acquired lock for {lock.to_token()}")
         return lock.to_token()
 
     def lock_acquired(self, lock_token: str) -> bool:
