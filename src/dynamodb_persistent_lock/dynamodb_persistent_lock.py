@@ -1,7 +1,6 @@
 import os
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import timedelta
 from decimal import Decimal
@@ -20,7 +19,7 @@ DEFAULT_SORT_KEY_NAME = "sort_key"
 DEFAULT_RECORD_VERSION_NUMBER_KEY_NAME = "rvn"
 DEFAULT_HEARTBEAT_PERIOD = timedelta(seconds=5)
 DEFAULT_TTL_ATTRIBUTE_NAME = "expire_at"
-DEFAULT_TTL_HEARTBEAT_MULTIPLIER = 2
+DEFAULT_TTL_HEARTBEAT_MULTIPLIER = 3
 
 DEFAULT_READ_CAPACITY = 3
 DEFAULT_WRITE_CAPACITY = 3
@@ -46,7 +45,7 @@ class DynamoDBLock:
                 )
             )
 
-    def to_key(self):
+    def to_token(self):
         return f"<{self.lock_key}|{self.sort_key}>"
 
 
@@ -90,7 +89,7 @@ class DynamoDBPersistentLockFactory:
             self.dynamodb_resource.meta.client.describe_table(TableName=self.table_name)
             logger.info(f"✅ DynamoDB table <{self.table_name}> exists")
         except ClientError as e:
-            logger.info(f"❌ DynamoDB table <{self.table_name}> does not exist")
+            logger.info(f"❌ DynamoDB table <{self.table_name}> does not exist: {e}")
             logger.info(f"Create DynamoDB table <{self.table_name}>")
             table = self.dynamodb_resource.create_table(
                 TableName=self.table_name,
@@ -148,7 +147,7 @@ class DynamoDBPersistentLockClient:
             return None
 
         self._start_heartbeat(lock)
-        return lock.to_key()
+        return lock.to_token()
 
     def lock_acquired(self, lock_token: str) -> bool:
         return lock_token in self.locks
@@ -175,6 +174,7 @@ class DynamoDBPersistentLockClient:
         try:
             return self._try_create_lock(lock)
         except self.table.meta.client.exceptions.ConditionalCheckFailedException as e:
+            logger.error(e)
             return self._try_reacquire_existing_lock(lock)
         except Exception as e:
             logger.error(e)
@@ -183,7 +183,7 @@ class DynamoDBPersistentLockClient:
         return lock
 
     def _try_create_lock(self, lock: DynamoDBLock) -> DynamoDBLock:
-        logger.info(f"❓ Trying to acquire the lock {lock.to_key()}.")
+        logger.info(f"❓ Trying to acquire the lock {lock.to_token()}.")
         item = {
             "Item": {
                 self.partition_key_name: lock.lock_key,
@@ -199,11 +199,11 @@ class DynamoDBPersistentLockClient:
             },
         }
         self.table.put_item(**item)
-        logger.info(f"✅ The lock {lock.to_key()} has been acquired: {lock}")
+        logger.info(f"✅ The lock {lock.to_token()} has been acquired: {lock}")
         return lock
 
     def _read_existing_lock(self, lock: DynamoDBLock) -> DynamoDBLock:
-        logger.info(f"❓ Reading existing lock {lock.to_key()}: {lock}")
+        logger.info(f"❓ Reading existing lock {lock.to_token()}: {lock}")
         query = {
             "Key": {
                 self.partition_key_name: lock.lock_key,
@@ -221,24 +221,24 @@ class DynamoDBPersistentLockClient:
         )
 
     def _try_reacquire_existing_lock(self, new_lock: DynamoDBLock) -> DynamoDBLock:
-        logger.warning(f"❌ The lock {new_lock.to_key()} already exists.")
+        logger.warning(f"❌ The lock {new_lock.to_token()} already exists.")
 
         existing_lock = self._read_existing_lock(new_lock)
-        logger.warning(f"❌ The lock {new_lock.to_key()} already exists.")
+        logger.warning(f"❌ The lock {new_lock.to_token()} already exists.")
         existing_lock = self._read_existing_lock(new_lock)
 
         logger.info(
-            f"❓ Checking the expiration of the existing lock {new_lock.to_key()}."
+            f"❓ Checking the expiration of the existing lock {new_lock.to_token()}."
         )
         if existing_lock.ttl > new_lock.now:
-            logger.error(f"❌ The existing lock {new_lock.to_key()} has not expired.")
+            logger.error(f"❌ The existing lock {new_lock.to_token()} has not expired.")
             return None
 
         logger.info(
-            f"❓ Trying to re-acquired the existing expired lock {new_lock.to_key()}."
+            f"❓ Trying to re-acquired the existing expired lock {new_lock.to_token()}."
         )
         self._update_lock(existing_lock=existing_lock, new_lock=new_lock)
-        logger.info(f"✅ Re-acquired the existing expired lock {new_lock.to_key()}.")
+        logger.info(f"✅ Re-acquired the existing expired lock {new_lock.to_token()}.")
         return new_lock
 
     def _update_lock(
@@ -272,6 +272,7 @@ class DynamoDBPersistentLockClient:
             return new_lock
         except self.table.meta.client.exceptions.ConditionalCheckFailedException as e:
             logger.error(e)
+            raise e
 
     def _delete_lock(self, existing_lock: DynamoDBLock) -> None:
         delete_query = {
@@ -288,21 +289,43 @@ class DynamoDBPersistentLockClient:
             },
         }
         try:
-            logger.info(f"Deleting the lock of {existing_lock.to_key()}")
+            logger.info(f"Deleting the lock of {existing_lock.to_token()}")
             self.table.delete_item(**delete_query)
         except self.table.meta.client.exceptions.ConditionalCheckFailedException as e:
             logger.error(e)
 
     def _send_heartbeat(self, existing_lock: DynamoDBLock, event: Event) -> None:
-        while not event.wait(existing_lock.heartbeat_period.total_seconds()):
-            logger.info(f"⏳ Extending an existing lock: {existing_lock.to_key()}")
+        def get_retries() -> int:
+            return min(1, self.ttl_heartbeat_multiplier - 1)
+
+        retries = get_retries()
+        while retries > 0 and not event.wait(
+            existing_lock.heartbeat_period.total_seconds()
+        ):
+            logger.info(f"⏳ Extending an existing lock: {existing_lock.to_token()}")
             new_lock = DynamoDBLock(
                 lock_key=existing_lock.lock_key,
                 sort_key=existing_lock.sort_key,
                 heartbeat_period=existing_lock.heartbeat_period,
                 ttl_heartbeat_multiplier=existing_lock.ttl_heartbeat_multiplier,
             )
-            self._update_lock(existing_lock=existing_lock, new_lock=new_lock)
+            try:
+                self._update_lock(existing_lock=existing_lock, new_lock=new_lock)
+                retries = get_retries()
+            except (
+                self.table.meta.client.exceptions.ConditionalCheckFailedException
+            ) as e:
+                logger.warning(
+                    f"❗ ❌ Lock {existing_lock.to_token()} was stolen! Giving up!: {e}"
+                )
+                self.locks.pop(existing_lock.to_token(), None)
+                retries = 0
+                return
+            except Exception as e:
+                logger.warning(
+                    f"❗ Experienced an error, will retry? {retries > 0}: {e}"
+                )
+                retries -= 1
             existing_lock = new_lock
 
         self._delete_lock(existing_lock=existing_lock)
@@ -310,9 +333,9 @@ class DynamoDBPersistentLockClient:
     def _start_heartbeat(self, existing_lock: DynamoDBLock) -> None:
         event = Event()
         thread = Thread(
-            name=f"DynamoDb-Persistent-Lock-on-<{existing_lock.to_key()}>",
+            name=f"DynamoDb-Persistent-Lock-on-<{existing_lock.to_token()}>",
             target=self._send_heartbeat,
             args=(existing_lock, event),
         )
-        self.locks[existing_lock.to_key()] = (event, thread)
+        self.locks[existing_lock.to_token()] = (event, thread)
         thread.start()

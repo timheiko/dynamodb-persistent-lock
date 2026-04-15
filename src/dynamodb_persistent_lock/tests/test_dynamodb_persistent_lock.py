@@ -1,7 +1,8 @@
+import time
 from datetime import timedelta
 
 import pytest
-from dynamodb_local import DynamoDBLocalServer, download_dynamodb, start_dynamodb_local
+from dynamodb_local import start_dynamodb_local
 
 from dynamodb_persistent_lock import (
     DynamoDBPersistentLockClient,
@@ -74,6 +75,48 @@ def test_acquire_lock_twice(lock_client: DynamoDBPersistentLockClient):
 
 
 @pytest.mark.slow
+def test_acquire_lock_twice_after_ttl_extension(
+    lock_client: DynamoDBPersistentLockClient,
+):
+    lock_client.heartbeat_period = timedelta(seconds=1)
+    lock_client.ttl_heartbeat_multiplier = 2
+    lock_client.owner_name = "test_acquire_lock_twice_after_ttl_extension"
+
+    lock_token1 = lock_client.try_acquire_lock("my_lock")
+
+    time.sleep(
+        lock_client.heartbeat_period.total_seconds()
+        * lock_client.ttl_heartbeat_multiplier
+        + 1
+    )
+
+    assert lock_token1 == "<my_lock|->"
+
+    lock_token2 = lock_client.try_acquire_lock("my_lock")
+
+    assert lock_token2 is None
+
+
+@pytest.mark.slow
+def test_acquire_lock_and_steal(
+    lock_client: DynamoDBPersistentLockClient,
+):
+    lock_client.heartbeat_period = timedelta(seconds=1)
+    lock_client.ttl_heartbeat_multiplier = 2
+    lock_client.owner_name = "test_acquire_lock_twice_after_ttl_extension"
+
+    lock_key = "my_lock_that_will_be_stollen"
+    lock_token1 = lock_client.try_acquire_lock(lock_key)
+
+    assert lock_token1 == "<my_lock_that_will_be_stollen|->"
+
+    steal_existing_lock(lock_client, lock_key)
+
+    time.sleep(lock_client.heartbeat_period.total_seconds() + 1)
+
+    assert not lock_client.lock_acquired(lock_token=lock_token1)
+
+
 def test_acquire_lock_and_check_it_acquired(lock_client: DynamoDBPersistentLockClient):
     lock_client.heartbeat_period = timedelta(seconds=1)
     lock_client.owner_name = "test_acquire_lock_and_check_it_acquired"
@@ -84,7 +127,6 @@ def test_acquire_lock_and_check_it_acquired(lock_client: DynamoDBPersistentLockC
     assert lock_client.lock_acquired(lock_token)
 
 
-@pytest.mark.slow
 def test_do_not_acquire_lock_and_check_it_acquired(
     lock_client: DynamoDBPersistentLockClient,
 ):
@@ -92,3 +134,30 @@ def test_do_not_acquire_lock_and_check_it_acquired(
     lock_client.owner_name = "test_do_not_acquire_lock_and_check_it_acquired"
 
     assert not lock_client.lock_acquired("<my_lock|->")
+
+
+def steal_existing_lock(
+    lock_client: DynamoDBPersistentLockClient, lock_key: str, sort_key: str = "-"
+):
+    new_rnv = "stolen-rnv"
+    new_owner = "test_thief"
+    new_ttl = int(time.time()) + 1_000
+    update_query = {
+        "Key": {
+            lock_client.partition_key_name: lock_key,
+            lock_client.sort_key_name: sort_key,
+        },
+        "UpdateExpression": "SET #rvn = :new_rvn, #owner = :owner, #ttl = :ttl",
+        "ExpressionAttributeNames": {
+            "#rvn": lock_client.record_version_number_name,
+            "#owner": "owner_name",
+            "#ttl": lock_client.ttl_attribute_name,
+        },
+        "ExpressionAttributeValues": {
+            ":ttl": new_ttl,
+            ":owner": new_owner,
+            ":new_rvn": new_rnv,
+        },
+        "ReturnValues": "NONE",
+    }
+    lock_client.table.update_item(**update_query)
