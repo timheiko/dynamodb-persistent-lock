@@ -6,7 +6,10 @@ requires = [
 [project]
 description = "DynamoDB Persistent Lock"
 name = "dynamodb-persistent-lock"
-license = {text = "Apache-2.0 AND MIT"}
+license = "Apache-2.0 AND MIT"
+license-files = [
+  "LICENSE.txt",
+]
 authors = [
   {name = "Tim Heiko", email = "175552092+timheiko@users.noreply.github.com"},
 ]
